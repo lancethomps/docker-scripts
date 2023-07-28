@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+################################################################### SETUP ########################################################################
+if ! _SCRIPT_DIR="$(get_script_dir "${BASH_SOURCE[0]}")"; then echo "Error while running: _SCRIPT_DIR=\"\$(get_script_dir \"${BASH_SOURCE[0]}\")\"" && exit 1; fi
+# shellcheck source=./.common_copy.sh
+source "${_SCRIPT_DIR}/.common_copy.sh" || exit 1
+set -o errexit -o errtrace -o nounset
+##################################################################################################################################################
+
+sleep_time=5
+
+################################################################### USAGE ########################################################################
+_SCRIPT_NAME="$(basename "$0")"
+
+function _usage() {
+  local SYNOP_INDENT
+  SYNOP_INDENT="$(head -c "$(echo -n "${_SCRIPT_NAME}" | wc -c)" </dev/zero | tr '\0' " ")"
+
+  cat <<EOF
+NAME
+       ${_SCRIPT_NAME}
+
+SYNOPSIS
+       ${_SCRIPT_NAME} -c | --container <container> [<docker_logs_arg>...]
+       ${SYNOP_INDENT} [--sleep-time <sleep_time>]
+       ${SYNOP_INDENT} [--help] [--debug] [--verbose]
+       ${SYNOP_INDENT} [<passthrough_arg>...]
+
+EXAMPLES
+       ${_SCRIPT_NAME}
+EOF
+}
+##################################################################################################################################################
+
+################################################################# SCRIPTARGS #####################################################################
+PASSTHROUGH_ARGS=()
+while test $# -gt 0; do
+  case "$1" in
+    -h | --help)
+      _usage
+      exit 0
+      ;;
+    --debug)
+      export debug_mode=true
+      shift
+      ;;
+    --verbose)
+      export verbose=true
+      shift
+      ;;
+    --container | -c)
+      shift
+      container="$1"
+      shift
+      ;;
+    --sleep-time)
+      shift
+      sleep_time="$1"
+      shift
+      ;;
+    --)
+      shift
+      PASSTHROUGH_ARGS+=("$@")
+      shift "$#"
+      break
+      ;;
+    *)
+      if test -z "${container-}"; then
+        container="$1"
+      else
+        PASSTHROUGH_ARGS+=("$1")
+      fi
+      shift
+      ;;
+  esac
+done
+##################################################################################################################################################
+
+function follow_logs() {
+  local exit_code
+
+  if ! d_is_container_running "$container"; then
+    log_verbose "container '${container}' not running, sleeping ${sleep_time}s and trying to follow again..."
+    sleep "$sleep_time"
+    follow_logs "$@"
+    return $?
+  fi
+
+  set +o errexit
+  log_verbose_and_run d logs "$@" -f "$container"
+  exit_code="$?"
+  set -o errexit
+
+  if test "${exit_code-}" -le 1; then
+    log_verbose "exited with code ${exit_code}, sleeping ${sleep_time}s and trying to follow again..."
+    sleep "$sleep_time"
+    follow_logs "$@"
+    return $?
+  fi
+
+  return "$exit_code"
+}
+
+function main() {
+  check_required_params container
+  follow_logs "$@"
+}
+
+main "${PASSTHROUGH_ARGS[@]}"
